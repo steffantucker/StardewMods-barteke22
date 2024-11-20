@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Reflection;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
@@ -11,22 +13,24 @@ using StardewValley.Extensions;
 using StardewValley.GameData;
 using StardewValley.GameData.Locations;
 using StardewValley.Internal;
+using StardewValley.ItemTypeDefinitions;
 using StardewValley.Locations;
 using StardewValley.Menus;
 using StardewValley.Tools;
 using Object = StardewValley.Object;
 
-namespace StardewMods
+namespace FishingInfoOverlays
 {
     /// <summary>The mod entry point.</summary>
-    public class Overlay
+    [SuppressMessage("ReSharper", "CompareOfFloatsByEqualityOperator")]
+    public class Overlay(ModEntry entry)
     {
-        ITranslationHelper translate;
-        private IMonitor Monitor;
-        private IModHelper Helper;
-        private IManifest ModManifest;
+        private readonly ITranslationHelper translate = entry.Helper.Translation;
+        private readonly IMonitor monitor = entry.Monitor;
+        private readonly IModHelper helper = entry.Helper;
+        // private IManifest ModManifest = entry.ModManifest; not used?
 
-        private bool hideText = false;    //world fish preview data 
+        private bool hideText;    //world fish preview data 
         private Farmer who;
         private int screen;
         private int totalPlayersOnThisPC;
@@ -38,15 +42,14 @@ namespace StardewMods
         private int fishChancesModulo;
         private List<string> oldGeneric;
         private Dictionary<string, int> fishFailed;
-        private bool isMinigameOther = false;
-        private float fixedZooom = 1f;
+        private bool isMinigameOther;
+        private float fixedZoom = 1f;
 
-        private bool isMinigame = false;    //minigame fish preview data, Reflection
+        private bool isMinigame;    //minigame fish preview data, Reflection
         private string miniFish;
         private bool hasSonar;
-
-
-        public static Dictionary<string, LocationData> locationData;
+        
+        // public static Dictionary<string, LocationData> locationData; not used?
         public static Dictionary<string, string> fishData;
         public static Texture2D[] background = new Texture2D[2];
         public static Color colorBg;
@@ -69,17 +72,7 @@ namespace StardewMods
         public static int[] sortMode = new int[4];
         public static bool[] uncaughtDark = new bool[4];
         public static bool[] onlyFish = new bool[4];
-        public static KeybindList scanKey = new(SButton.LeftShift);
-
-
-        public Overlay(ModEntry entry)
-        {
-            this.Helper = entry.Helper;
-            this.Monitor = entry.Monitor;
-            this.ModManifest = entry.ModManifest;
-            this.translate = entry.Helper.Translation;
-        }
-
+        private static readonly KeybindList ScanKey = new(SButton.LeftShift);
 
 
         public void Rendered(object sender, RenderedEventArgs e)
@@ -90,7 +83,7 @@ namespace StardewMods
                 !((who.CurrentItem is FishingRod) || ("Crab Pot".Equals(who.CurrentItem.Name, StringComparison.Ordinal) && barCrabEnabled[screen]))) return;//code stop conditions
 
             totalPlayersOnThisPC = 1;
-            foreach (IMultiplayerPeer peer in Helper.Multiplayer.GetConnectedPlayers())
+            foreach (IMultiplayerPeer peer in helper.Multiplayer.GetConnectedPlayers())
             {
                 if (peer.IsSplitScreen) totalPlayersOnThisPC++;
             }
@@ -103,24 +96,24 @@ namespace StardewMods
                 hasSonar = rod.GetTackleQualifiedItemIDs().Contains("(O)SonarBobber");
                 if (sonarMode == 0 && !hasSonar) return;
 
-                var m = typeof(FishingRod).GetMethod("getAddedDistance", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                maxDist = (int)m?.Invoke(rod, [who]) + 4;
+                MethodInfo m = typeof(FishingRod).GetMethod("getAddedDistance", BindingFlags.NonPublic | BindingFlags.Instance);
+                maxDist = (int)m?.Invoke(rod, [who])! + 4;
             }
 
             SpriteFont font = Game1.smallFont;
-            var miniData = ItemRegistry.GetDataOrErrorItem(miniFish);                                   //UI INIT
+            ParsedItemData miniData = ItemRegistry.GetDataOrErrorItem(miniFish);                                   //UI INIT
             Rectangle source = miniData.GetSourceRect();
             SpriteBatch batch = Game1.spriteBatch;
 
-            batch.End();    //stop current UI drawing and start mode where where layers work from 0f-1f
+            batch.End();    //stop current UI drawing and start mode where layers work from 0f-1f
             batch.Begin(SpriteSortMode.FrontToBack, BlendState.AlphaBlend, SamplerState.PointClamp, DepthStencilState.None, RasterizerState.CullCounterClockwise);
 
             //MINIGAME PREVIEW
-            if (isMinigame && miniMode[screen] < 2 && Game1.activeClickableMenu is BobberBar bar && bar.scale == 1f && (hasSonar || sonarMode > 1)) //scale == 1f when moving elements appear
+            if (isMinigame && miniMode[screen] < 2 && Game1.activeClickableMenu is BobberBar { scale: 1f } bar && (hasSonar || sonarMode > 1)) //scale == 1f when moving elements appear
             {
                 if (miniMode[screen] == 0) //Full minigame
                 {
-                    //rod+bar textture cut to only cover the minigame bar
+                    //rod+bar texture cut to only cover the minigame bar
                     batch.Draw(Game1.mouseCursors, (new Vector2(bar.xPositionOnScreen + 126, bar.yPositionOnScreen + 292) + bar.everythingShake),
                         new Rectangle(658, 1998, 15, 149), Color.White * bar.scale, 0f, new Vector2(18.5f, 74f) * bar.scale, (4f * bar.scale), SpriteEffects.None, 0.01f);
 
@@ -133,12 +126,12 @@ namespace StardewMods
                         new Rectangle(682, 2085, 9, 2), bar.bobberInBar ? Color.White : (Color.White * 0.25f * ((float)Math.Round(Math.Sin(Game1.currentGameTime.TotalGameTime.TotalMilliseconds / 100.0), 2) + 2f)), 0f, Vector2.Zero, (4f), SpriteEffects.None, 0.89f);
 
                     //treasure
-                    batch.Draw(Game1.mouseCursors, (new Vector2(bar.xPositionOnScreen + 64 + 18, (float)(bar.yPositionOnScreen + 12 + 24) + bar.treasurePosition) + bar.treasureShake + bar.everythingShake),
+                    batch.Draw(Game1.mouseCursors, (new Vector2(bar.xPositionOnScreen + 64 + 18, (bar.yPositionOnScreen + 12 + 24) + bar.treasurePosition) + bar.treasureShake + bar.everythingShake),
                         new Rectangle(638, 1865, 20, 24), Color.White, 0f, new Vector2(10f, 10f), (2f * bar.treasureScale), SpriteEffects.None, 0.9f);
                     if (bar.treasureCatchLevel > 0f && !bar.treasureCaught)//treasure progress
                     {
-                        batch.Draw(Game1.staminaRect, new Rectangle((int)(bar.xPositionOnScreen + 64), (int)(bar.yPositionOnScreen + 12 + (int)bar.treasurePosition), (int)(40), (int)(8)), null, Color.DimGray * 0.5f, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);
-                        batch.Draw(Game1.staminaRect, new Rectangle((int)(bar.xPositionOnScreen + 64), (int)(bar.yPositionOnScreen + 12 + (int)bar.treasurePosition), (int)((bar.treasureCatchLevel * 40f)), (int)(8)), null, Color.Orange, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);
+                        batch.Draw(Game1.staminaRect, new Rectangle(bar.xPositionOnScreen + 64, bar.yPositionOnScreen + 12 + (int)bar.treasurePosition, 40, 8), null, Color.DimGray * 0.5f, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);
+                        batch.Draw(Game1.staminaRect, new Rectangle(bar.xPositionOnScreen + 64, bar.yPositionOnScreen + 12 + (int)bar.treasurePosition, (int)((bar.treasureCatchLevel * 40f)), 8), null, Color.Orange, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);
                     }
                 }
                 else batch.Draw(Game1.mouseCursors, (new Vector2(bar.xPositionOnScreen + 82, (bar.yPositionOnScreen + 36) + bar.bobberPosition) + bar.fishShake + bar.everythingShake),
@@ -155,8 +148,8 @@ namespace StardewMods
 
             if (iconMode[screen] != 3)
             {
-                fixedZooom = (Game1.options.zoomLevel == 1f ? 0.75f : Game1.options.zoomLevel) * 0.8f;
-                float iconScale = Game1.pixelZoom / 2f * barScale[screen] / fixedZooom;
+                fixedZoom = (Game1.options.zoomLevel == 1f ? 0.75f : Game1.options.zoomLevel) * 0.8f;
+                float iconScale = Game1.pixelZoom / 2f * barScale[screen] / fixedZoom;
                 int iconCount = 0;
                 float boxWidth = 0;
                 float boxHeight = 0;
@@ -180,7 +173,7 @@ namespace StardewMods
                     Object bait = rod.GetBait();
                     if (bait != null)
                     {
-                        var data = ItemRegistry.GetData(bait.QualifiedItemId);
+                        ParsedItemData data = ItemRegistry.GetData(bait.QualifiedItemId);
                         source = data.GetSourceRect();
                         if (backgroundMode[screen] == 0) AddBackground(batch, boxTopLeft, boxBottomLeft, iconCount, source, iconScale, boxWidth, boxHeight);
 
@@ -198,11 +191,11 @@ namespace StardewMods
                     }
                     var tackles = rod.GetTackle();
                     var anyTackle = false;
-                    foreach (var tackle in tackles)
+                    foreach (Object tackle in tackles)
                     {
                         if (tackle != null)
                         {
-                            var data = ItemRegistry.GetDataOrErrorItem(tackle?.QualifiedItemId);
+                            ParsedItemData data = ItemRegistry.GetDataOrErrorItem(tackle?.QualifiedItemId);
                             source = data.GetSourceRect();
                             if (backgroundMode[screen] == 0) AddBackground(batch, boxTopLeft, boxBottomLeft, iconCount, source, iconScale, boxWidth, boxHeight);
 
@@ -238,14 +231,14 @@ namespace StardewMods
                 {
                     if (rod != null)
                     {
-                        if (screen == 0 && (hasSonar || sonarMode == 4) && scanKey.IsDown())
+                        if (screen == 0 && (hasSonar || sonarMode == 4) && ScanKey.IsDown())
                         {
                             showTile = true;
                             int x = (int)Game1.currentCursorTile.X;
                             int y = (int)Game1.currentCursorTile.Y;
                             if (who.currentLocation.isTileFishable(x, y) && !who.currentLocation.isTileBuildingFishable(x, y))
                             {
-                                nearestWaterTile = new(x, y);
+                                nearestWaterTile = new Vector2(x, y);
                                 foundWater = true;
                             }
                         }
@@ -271,7 +264,7 @@ namespace StardewMods
                                 }
                                 if (who.currentLocation.isTileFishable(x, y) && !who.currentLocation.isTileBuildingFishable(x, y))
                                 {
-                                    nearestWaterTile = new(x, y);
+                                    nearestWaterTile = new Vector2(x, y);
                                     foundWater = true;
                                     break;
                                 }
@@ -299,7 +292,7 @@ namespace StardewMods
                     }
                 }
 
-                var defaultSource = new Rectangle(0, 0, 16, 16);
+                Rectangle defaultSource = new Rectangle(0, 0, 16, 16);
                 if (foundWater)
                 {
                     if (rod != null)   //LOCATION FISH PREVIEW
@@ -322,58 +315,54 @@ namespace StardewMods
                     {
                         if (onlyFish[screen] && fish != "(O)168" && !fishData.ContainsKey(fish.Replace("(O)", ""))) continue;//skip if not fish, except trash
 
-                        int percent = fishChancesSlow.ContainsKey(fish) ? (int)Math.Round((float)fishChancesSlow[fish] / fishChancesSlow["-1"] * 100f) : 0; //chance of this fish
+                        int percent = fishChancesSlow.TryGetValue(fish, out var value) ? (int)Math.Round((float)value / fishChancesSlow["-1"] * 100f) : 0; //chance of this fish
 
-                        if (iconCount < maxIcons[screen] && percent > 0)
+                        if (iconCount >= maxIcons[screen] || percent <= 0) continue;
+                        ParsedItemData data = ItemRegistry.GetDataOrErrorItem(fish);
+                        bool caught = (!uncaughtDark[screen] || who.fishCaught.ContainsKey(data.QualifiedItemId)) || fish == "(O)168";
+
+                        iconCount++;
+                        string fishNameLocalized = caught ? data.DisplayName : "???";
+                        Texture2D txt2d = data.GetTexture();
+                        source = data.GetSourceRect();
+
+                        if (fishNameLocalized.StartsWith("Error Item")) continue;
+
+                        if (fish == "(O)168") batch.Draw(txt2d, boxBottomLeft + new Vector2(FixIconScale(2), FixIconScale(-5)), source, (caught ? Color.White : Color.DarkSlateGray),
+                            0f, Vector2.Zero, FixRectScale(source, FixIconScale(1.9f)), SpriteEffects.None, 0.98f);//icon trash
+                        else batch.Draw(txt2d, FixSourceOffset(source, boxBottomLeft), source, (caught ? Color.White : Color.DarkSlateGray), 0f, Vector2.Zero, FixIconScale(FixRectScale(source, 1.9f)), SpriteEffects.None, 0.98f);//icon
+
+                        if (showPercentages[screen])
                         {
-                            var data = ItemRegistry.GetDataOrErrorItem(fish);
-                            bool caught = (!uncaughtDark[screen] || who.fishCaught.ContainsKey(data.QualifiedItemId));
-                            if (fish == "(O)168") caught = true;
+                            DrawStringWithBorder(batch, font, percent + "%", boxBottomLeft + new Vector2((8 * iconScale), FixIconScale(27f)),
+                                (caught) ? colorText : colorText * 0.8f, 0f, new Vector2(font.MeasureString(percent + "%").X / 2f, 0f), FixIconScale(0.58f), SpriteEffects.None, 1f, colorBg);//%
+                        }
 
-                            iconCount++;
-                            string fishNameLocalized = caught ? data.DisplayName : "???";
-                            Texture2D txt2d = data.GetTexture();
-                            source = data.GetSourceRect();
+                        if (fish.Replace("(O)", "") == miniFish && miniMode[screen] < 3) batch.Draw(background[screen], new Rectangle((int)boxBottomLeft.X - 1, (int)boxBottomLeft.Y - 1, (int)(16 * iconScale) + 1, (int)((16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0) + 1)),
+                            null, Color.GreenYellow, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);//green minigame outline on bar
 
-                            if (fishNameLocalized.StartsWith("Error Item")) continue;
+                        if (backgroundMode[screen] == 0) AddBackground(batch, boxTopLeft, boxBottomLeft, iconCount, defaultSource, iconScale, boxWidth, boxHeight);
 
-                            if (fish == "(O)168") batch.Draw(txt2d, boxBottomLeft + new Vector2(FixIconScale(2), FixIconScale(-5)), source, (caught ? Color.White : Color.DarkSlateGray),
-                                0f, Vector2.Zero, FixRectScale(source, FixIconScale(1.9f)), SpriteEffects.None, 0.98f);//icon trash
-                            else batch.Draw(txt2d, FixSourceOffset(source, boxBottomLeft), source, (caught ? Color.White : Color.DarkSlateGray), 0f, Vector2.Zero, FixIconScale(FixRectScale(source, 1.9f)), SpriteEffects.None, 0.98f);//icon
 
-                            if (showPercentages[screen])
+                        if (iconMode[screen] == 0)      //Horizontal Preview
+                        {
+                            if (iconCount % maxIconsPerRow[screen] == 0) boxBottomLeft = new Vector2(boxTopLeft.X, boxBottomLeft.Y + (16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0)); //row switch
+                            else boxBottomLeft += new Vector2(16 * iconScale, 0);
+                        }
+                        else                    //Vertical Preview
+                        {
+                            if (iconMode[screen] == 2 && !hideText)  // + text
                             {
-                                DrawStringWithBorder(batch, font, percent + "%", boxBottomLeft + new Vector2((8 * iconScale), FixIconScale(27f)),
-                                    (caught) ? colorText : colorText * 0.8f, 0f, new Vector2(font.MeasureString(percent + "%").X / 2f, 0f), FixIconScale(0.58f), SpriteEffects.None, 1f, colorBg);//%
+                                DrawStringWithBorder(batch, font, fishNameLocalized, boxBottomLeft + new Vector2(FixIconScale(35), 0), (caught) ? colorText : colorText * 0.8f, 0f, new Vector2(0, -3), FixIconScale(1f), SpriteEffects.None, 0.98f, colorBg); //text
+                                boxWidth = Math.Max(boxWidth, boxBottomLeft.X + FixIconScale((font.MeasureString(fishNameLocalized).X)) + (16 * iconScale));
                             }
 
-                            if (fish.Replace("(O)", "") == miniFish && miniMode[screen] < 3) batch.Draw(background[screen], new Rectangle((int)boxBottomLeft.X - 1, (int)boxBottomLeft.Y - 1, (int)(16 * iconScale) + 1, (int)((16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0) + 1)),
-                                null, Color.GreenYellow, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);//green minigame outline on bar
-
-                            if (backgroundMode[screen] == 0) AddBackground(batch, boxTopLeft, boxBottomLeft, iconCount, defaultSource, iconScale, boxWidth, boxHeight);
-
-
-                            if (iconMode[screen] == 0)      //Horizontal Preview
+                            if (iconCount % maxIconsPerRow[screen] == 0) //row switch
                             {
-                                if (iconCount % maxIconsPerRow[screen] == 0) boxBottomLeft = new Vector2(boxTopLeft.X, boxBottomLeft.Y + (16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0)); //row switch
-                                else boxBottomLeft += new Vector2(16 * iconScale, 0);
+                                boxBottomLeft = iconMode[screen] == 2 ? new Vector2(boxWidth + (FixIconScale(20)), boxTopLeft.Y) : new Vector2(boxBottomLeft.X + (16 * iconScale), boxTopLeft.Y);
                             }
-                            else                    //Vertical Preview
-                            {
-                                if (iconMode[screen] == 2 && !hideText)  // + text
-                                {
-                                    DrawStringWithBorder(batch, font, fishNameLocalized, boxBottomLeft + new Vector2(FixIconScale(35), 0), (caught) ? colorText : colorText * 0.8f, 0f, new Vector2(0, -3), FixIconScale(1f), SpriteEffects.None, 0.98f, colorBg); //text
-                                    boxWidth = Math.Max(boxWidth, boxBottomLeft.X + FixIconScale((font.MeasureString(fishNameLocalized).X)) + (16 * iconScale));
-                                }
-
-                                if (iconCount % maxIconsPerRow[screen] == 0) //row switch
-                                {
-                                    if (iconMode[screen] == 2) boxBottomLeft = new Vector2(boxWidth + (FixIconScale(20)), boxTopLeft.Y);
-                                    else boxBottomLeft = new Vector2(boxBottomLeft.X + (16 * iconScale), boxTopLeft.Y);
-                                }
-                                else boxBottomLeft += new Vector2(0, (16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0));
-                                if (iconMode[screen] == 2 && iconCount <= maxIconsPerRow[screen]) boxHeight += (16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0);
-                            }
+                            else boxBottomLeft += new Vector2(0, (16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0));
+                            if (iconMode[screen] == 2 && iconCount <= maxIconsPerRow[screen]) boxHeight += (16 * iconScale) + (showPercentages[screen] ? FixIconScale(10) : 0);
                         }
                     }
                     if (backgroundMode[screen] == 1) AddBackground(batch, boxTopLeft, boxBottomLeft, iconCount, defaultSource, iconScale, boxWidth, boxHeight);
@@ -420,58 +409,54 @@ namespace StardewMods
 
         private void AddGenericFishToList(Vector2 bobberTile)
         {
-            if (Game1.ticks % (isMinigame ? 600 : 30) == 0 || oldGeneric == null)
+            if (Game1.ticks % (isMinigame ? 600 : 30) != 0 && oldGeneric != null) return;
+            oldGeneric = [];
+            fishHere = ["(O)168"];
+            fishChancesSlow = new Dictionary<string, int> { { "-1", 100 }, { "(O)168", 0 } };//-1 represents the total
+
+            var hard = AddHardcoded(bobberTile, false);
+            if (hard != "-2")
             {
-                oldGeneric = new();
-                fishHere = new() { "(O)168" };
-                fishChancesSlow = new() { { "-1", 100 }, { "(O)168", 0 } };//-1 represents the total
+                Dictionary<string, float> data = GetFishFromLocationData(who.currentLocation.Name, bobberTile, 5, who, !who.fishCaught.Any(), false, who.currentLocation, null);
 
-                var hard = AddHardcoded(bobberTile, false);
-                if (hard != "-2")
+                if (hard != "-1")
                 {
-                    Dictionary<string, float> data = GetFishFromLocationData(who.currentLocation.Name, bobberTile, 5, who, !who.fishCaught.Any(), false, who.currentLocation, null);
-
-                    if (hard != "-1")
+                    if (hard.Contains('|'))
                     {
-                        if (hard.Contains('|'))
+                        var d = hard.Split('|');
+                        for (int i = 0; i < d.Length; i += 2)
                         {
-                            var d = hard.Split('|');
-                            for (int i = 0; i < d.Length; i += 2)
-                            {
-                                var c = float.Parse(d[i + 1]);
-                                data[d[i]] = c * (data.Sum(f => f.Value) + c);
-                            }
-                        }
-                        else data[hard] = 1000;
-                    }
-
-                    float total = data.Sum(f => f.Value);
-                    var j = data.FirstOrDefault(f => ItemRegistry.GetDataOrErrorItem(f.Key).Category == Object.junkCategory);
-                    float notJunk = j.Key != null ? j.Value : 1f;
-                    total -= notJunk;
-                    foreach (var fish in data)
-                    {
-                        int itemCategory = ItemRegistry.GetDataOrErrorItem(fish.Key).Category;
-                        if (fish.Value < 1f && itemCategory != Object.junkCategory)
-                        {
-                            notJunk *= 1f - fish.Value;
+                            var c = float.Parse(d[i + 1]);
+                            data[d[i]] = c * (data.Sum(f => f.Value) + c);
                         }
                     }
-                    total += notJunk;
-                    foreach (var fish in data)
-                    {
-                        int itemCategory = ItemRegistry.GetDataOrErrorItem(fish.Key).Category;
-                        if (itemCategory != Object.junkCategory)
-                        {
-                            if (sortMode[screen] == 0) SortItemIntoListByDisplayName(fish.Key); //sort by name
-                            else fishHere.Add(fish.Key);
-                            fishChancesSlow[fish.Key] = (int)Math.Round(fish.Value / total * 100);
-                        }
-                    }
-                    fishChancesSlow["(O)168"] = (int)Math.Round(notJunk / total * 100);
+                    else data[hard] = 1000;
                 }
-                if (sortMode[screen] == 1) SortListByPercentages(); //sort by %
+
+                float total = data.Sum(f => f.Value);
+                var j = data.FirstOrDefault(f => ItemRegistry.GetDataOrErrorItem(f.Key).Category == Object.junkCategory);
+                float notJunk = j.Key != null ? j.Value : 1f;
+                total -= notJunk;
+                foreach (var fish in data)
+                {
+                    int itemCategory = ItemRegistry.GetDataOrErrorItem(fish.Key).Category;
+                    if (fish.Value < 1f && itemCategory != Object.junkCategory)
+                    {
+                        notJunk *= 1f - fish.Value;
+                    }
+                }
+                total += notJunk;
+                foreach (var fish in data)
+                {
+                    int itemCategory = ItemRegistry.GetDataOrErrorItem(fish.Key).Category;
+                    if (itemCategory == Object.junkCategory) continue;
+                    if (sortMode[screen] == 0) SortItemIntoListByDisplayName(fish.Key); //sort by name
+                    else fishHere.Add(fish.Key);
+                    fishChancesSlow[fish.Key] = (int)Math.Round(fish.Value / total * 100);
+                }
+                fishChancesSlow["(O)168"] = (int)Math.Round(notJunk / total * 100);
             }
+            if (sortMode[screen] == 1) SortListByPercentages(); //sort by %
         }
 
         /// <summary>
@@ -481,24 +466,19 @@ namespace StardewMods
         {
             Dictionary<string, float> passed = [];
 
-            if (location == null)
-            {
-                location = Game1.getLocationFromName(locationName);
-            }
+            location ??= Game1.getLocationFromName(locationName);
             Dictionary<string, LocationData> dictionary = DataLoader.Locations(Game1.content);
             LocationData locationData = ((location != null) ? location.GetData() : GameLocation.GetData(locationName));
             Dictionary<string, string> allFishData = DataLoader.Fish(Game1.content);
             Season season = Game1.GetSeasonForLocation(location);
-            if (location == null || !location.TryGetFishAreaForTile(bobberTile, out var fishAreaId, out var _))
+            if (location == null || !location.TryGetFishAreaForTile(bobberTile, out var fishAreaId, out FishAreaData _))
             {
                 fishAreaId = null;
             }
             bool usingMagicBait = false;
             bool hasCuriosityLure = false;
             string baitTargetFish = null;
-            bool usingGoodBait = false;
-            FishingRod rod = player?.CurrentTool as FishingRod;
-            if (rod != null)
+            if (player?.CurrentTool is FishingRod rod)
             {
                 usingMagicBait = rod.HasMagicBait();
                 hasCuriosityLure = rod.HasCuriosityLure();
@@ -507,18 +487,11 @@ namespace StardewMods
                 {
                     baitTargetFish = "(O)" + bait.preservedParentSheetIndex.Value;
                 }
-                if (bait?.QualifiedItemId != "(O)685")
-                {
-                    usingGoodBait = true;
-                }
             }
-            Point playerTile = player.TilePoint;
-            if (itemQueryContext == null)
-            {
-                itemQueryContext = new ItemQueryContext(location, null, Game1.random);
-            }
+            Point playerTile = player!.TilePoint;
+            itemQueryContext ??= new ItemQueryContext(location, null, Game1.random, "FIO");
             IEnumerable<SpawnFishData> possibleFish = dictionary["Default"].Fish;
-            if (locationData != null && locationData.Fish?.Count > 0)
+            if (locationData is { Fish.Count: > 0 })
             {
                 possibleFish = possibleFish.Concat(locationData.Fish);
             }
@@ -534,7 +507,7 @@ namespace StardewMods
                 {
                     continue;
                 }
-                Microsoft.Xna.Framework.Rectangle? playerPosition = spawn.PlayerPosition;
+                Rectangle? playerPosition = spawn.PlayerPosition;
                 if (playerPosition.HasValue && !playerPosition.GetValueOrDefault().Contains(playerTile.X, playerTile.Y))
                 {
                     continue;
@@ -544,7 +517,7 @@ namespace StardewMods
                 {
                     continue;
                 }
-                float chance = spawn.GetChance(hasCuriosityLure, player.DailyLuck, player.LuckLevel, (float value, IList<QuantityModifier> modifiers, QuantityModifier.QuantityModifierMode mode) => Utility.ApplyQuantityModifiers(value, modifiers, mode, location), spawn.ItemId == baitTargetFish);
+                float chance = spawn.GetChance(hasCuriosityLure, player.DailyLuck, player.LuckLevel, (value, modifiers, mode) => Utility.ApplyQuantityModifiers(value, modifiers, mode, location), spawn.ItemId == baitTargetFish);
                 if (spawn.UseFishCaughtSeededRandom)
                 {
                     if (!Utility.CreateRandom(Game1.uniqueIDForThisGame, player.stats.Get("PreciseFishCaught") * 859).NextBool(chance))
@@ -557,7 +530,7 @@ namespace StardewMods
                     continue;
                 }
 
-                List<string> queries = new();
+                List<string> queries = [];
                 if (spawn.RandomItemId != null && spawn.RandomItemId.Count != 0)
                 {
                     queries = spawn.RandomItemId;
@@ -574,13 +547,14 @@ namespace StardewMods
                         query = q.Replace("BOBBER_X", ((int)bobberTile.X).ToString()).Replace("BOBBER_Y", ((int)bobberTile.Y).ToString()).Replace("WATER_DEPTH", waterDepth.ToString());
                     }
 
-                    List<Item> items = new();
+                    List<Item> items = [];
                     for (int i = 0; i < max; i++)
                     {
                         var item = ItemQueryResolver.TryResolve(query, itemQueryContext, ItemQuerySearchMode.FirstOfTypeItem, spawn.PerItemCondition, spawn.MaxItems, true);
-                        if (item.FirstOrDefault()?.Item is Item fish && !items.Any(f => f.QualifiedItemId == fish.QualifiedItemId)) items.Add(fish);
+                        if (item.FirstOrDefault()?.Item is Item fish) items.Add(fish);
                     }
-                    foreach (var fish in items)
+                    items = items.DistinctBy(item => item.ItemId).ToList();
+                    foreach (Item fish in items)
                     {
                         if (fish.Category == Object.junkCategory) fish.ItemId = "168";
                         if (!string.IsNullOrWhiteSpace(spawn.SetFlagOnCatch))
@@ -591,31 +565,26 @@ namespace StardewMods
                         {
                             fish.SetTempData("IsBossFish", value: true);
                         }
-                        if ((spawn.CatchLimit <= -1 || !player.fishCaught.TryGetValue(fish.QualifiedItemId, out var values) || values[0] < spawn.CatchLimit))
+
+                        if ((spawn.CatchLimit > -1 &&
+                             player.fishCaught.TryGetValue(fish.QualifiedItemId, out var values) &&
+                             values[0] >= spawn.CatchLimit)) continue;
+                        float c = CheckGenericFishRequirements(fish, allFishData, location, player, spawn, waterDepth, usingMagicBait, hasCuriosityLure, spawn.ItemId == baitTargetFish, isTutorialCatch);
+                        if (!(c > 0)) continue;
+                        if (baitTargetFish == null || fish.QualifiedItemId == baitTargetFish || targetedBaitTries >= 2)
                         {
-                            float c = CheckGenericFishRequirements(fish, allFishData, location, player, spawn, waterDepth, usingMagicBait, hasCuriosityLure, spawn.ItemId == baitTargetFish, isTutorialCatch);
-                            if (c > 0)
-                            {
-                                if (baitTargetFish == null || !(fish.QualifiedItemId != baitTargetFish) || targetedBaitTries >= 2)
-                                {
-                                    passed[fish.QualifiedItemId] = chance * c;
-                                }
-                                if (firstNonTargetFish == null)
-                                {
-                                    firstNonTargetFish = fish;
-                                }
-                                targetedBaitTries++;
-                            }
+                            passed[fish.QualifiedItemId] = chance * c;
                         }
+                        firstNonTargetFish ??= fish;
+                        targetedBaitTries++;
                     }
                 }
             }
-            if (passed.Count == 0)
+
+            if (passed.Count != 0) return passed;
+            if (isTutorialCatch && firstNonTargetFish == null)
             {
-                if (isTutorialCatch && firstNonTargetFish == null)
-                {
-                    passed["(O)145"] = 1;
-                }
+                passed["(O)145"] = 1;
             }
             return passed;
         }
@@ -623,7 +592,7 @@ namespace StardewMods
         /// <summary>
         /// MODIFIED COPY OF GameLocation.CheckGenericFishRequirements();
         /// </summary>
-        internal float CheckGenericFishRequirements(Item fish, Dictionary<string, string> allFishData, GameLocation location, Farmer player, SpawnFishData spawn, int waterDepth, bool usingMagicBait, bool hasCuriosityLure, bool usingTargetBait, bool isTutorialCatch)
+        internal static float CheckGenericFishRequirements(Item fish, Dictionary<string, string> allFishData, GameLocation location, Farmer player, SpawnFishData spawn, int waterDepth, bool usingMagicBait, bool hasCuriosityLure, bool usingTargetBait, bool isTutorialCatch)
         {
             if (!fish.HasTypeObject() || !allFishData.TryGetValue(fish.ItemId, out var rawSpecificFishData))
             {
@@ -637,7 +606,7 @@ namespace StardewMods
             bool isTrainingRod = player?.CurrentTool?.QualifiedItemId == "(T)TrainingRod";
             if (isTrainingRod)
             {
-                if (!ArgUtility.TryGetInt(specificFishData, 1, out var difficulty, out var error7))
+                if (!ArgUtility.TryGetInt(specificFishData, 1, out var difficulty, out _))
                 {
                     return 0;
                 }
@@ -648,7 +617,7 @@ namespace StardewMods
             }
             if (isTutorialCatch)
             {
-                if (!ArgUtility.TryGetOptionalBool(specificFishData, 13, out var isTutorialFish, out var error6))
+                if (!ArgUtility.TryGetOptionalBool(specificFishData, 13, out var isTutorialFish, out _))
                 {
                     return 0;
                 }
@@ -657,104 +626,102 @@ namespace StardewMods
                     return 0;
                 }
             }
-            if (!spawn.IgnoreFishDataRequirements)
+
+            if (spawn.IgnoreFishDataRequirements) return 1;
+            if (!usingMagicBait)
             {
-                if (!usingMagicBait)
-                {
-                    if (!ArgUtility.TryGet(specificFishData, 5, out var rawTimeSpans, out var error5))
-                    {
-                        return 0;
-                    }
-                    string[] timeSpans = ArgUtility.SplitBySpace(rawTimeSpans);
-                    bool found = false;
-                    for (int i = 0; i < timeSpans.Length; i += 2)
-                    {
-                        if (!ArgUtility.TryGetInt(timeSpans, i, out var startTime, out error5) || !ArgUtility.TryGetInt(timeSpans, i + 1, out var endTime, out error5))
-                        {
-                            return 0;
-                        }
-                        if (Game1.timeOfDay >= startTime && Game1.timeOfDay < endTime)
-                        {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found)
-                    {
-                        return 0;
-                    }
-                }
-                if (!usingMagicBait)
-                {
-                    if (!ArgUtility.TryGet(specificFishData, 7, out var weather, out var error4))
-                    {
-                        return 0;
-                    }
-                    if (!(weather == "rainy"))
-                    {
-                        if (weather == "sunny" && location.IsRainingHere())
-                        {
-                            return 0;
-                        }
-                    }
-                    else if (!location.IsRainingHere())
-                    {
-                        return 0;
-                    }
-                }
-                if (!ArgUtility.TryGetInt(specificFishData, 12, out var minFishingLevel, out var error3))
+                if (!ArgUtility.TryGet(specificFishData, 5, out var rawTimeSpans, out _))
                 {
                     return 0;
                 }
-                if (player.FishingLevel < minFishingLevel)
+                string[] timeSpans = ArgUtility.SplitBySpace(rawTimeSpans);
+                bool found = false;
+                for (int i = 0; i < timeSpans.Length; i += 2)
+                {
+                    if (!ArgUtility.TryGetInt(timeSpans, i, out var startTime, out _) || !ArgUtility.TryGetInt(timeSpans, i + 1, out var endTime, out _))
+                    {
+                        return 0;
+                    }
+                    if (Game1.timeOfDay >= startTime && Game1.timeOfDay < endTime)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
                 {
                     return 0;
                 }
-                if (!ArgUtility.TryGetInt(specificFishData, 9, out var maxDepth, out var error2) || !ArgUtility.TryGetFloat(specificFishData, 10, out var chance, out error2) || !ArgUtility.TryGetFloat(specificFishData, 11, out var depthMultiplier, out error2))
-                {
-                    return 0;
-                }
-                float dropOffAmount = depthMultiplier * chance;
-                chance -= (float)Math.Max(0, maxDepth - waterDepth) * dropOffAmount;
-                chance += (float)player.FishingLevel / 50f;
-                if (isTrainingRod)
-                {
-                    chance *= 1.1f;
-                }
-                chance = Math.Min(chance, 0.9f);
-                if ((double)chance < 0.25 && hasCuriosityLure)
-                {
-                    if (spawn.CuriosityLureBuff > -1f)
-                    {
-                        chance += spawn.CuriosityLureBuff;
-                    }
-                    else
-                    {
-                        float max = 0.25f;
-                        float min = 0.08f;
-                        chance = (max - min) / max * chance + (max - min) / 2f;
-                    }
-                }
-                if (usingTargetBait)
-                {
-                    chance *= 1.66f;
-                }
-                if (spawn.ApplyDailyLuck)
-                {
-                    chance += (float)player.DailyLuck;
-                }
-                List<QuantityModifier> chanceModifiers = spawn.ChanceModifiers;
-                if (chanceModifiers != null && chanceModifiers.Count > 0)
-                {
-                    chance = Utility.ApplyQuantityModifiers(chance, spawn.ChanceModifiers, spawn.ChanceModifierMode, location);
-                }
-                return chance;
             }
-            return 1;
+            if (!usingMagicBait)
+            {
+                if (!ArgUtility.TryGet(specificFishData, 7, out var weather, out _))
+                {
+                    return 0;
+                }
+                if (weather != "rainy")
+                {
+                    if (weather == "sunny" && location.IsRainingHere())
+                    {
+                        return 0;
+                    }
+                }
+                else if (!location.IsRainingHere())
+                {
+                    return 0;
+                }
+            }
+            if (!ArgUtility.TryGetInt(specificFishData, 12, out var minFishingLevel, out _))
+            {
+                return 0;
+            }
+            if (player!.FishingLevel < minFishingLevel)
+            {
+                return 0;
+            }
+            if (!ArgUtility.TryGetInt(specificFishData, 9, out var maxDepth, out _) || !ArgUtility.TryGetFloat(specificFishData, 10, out var chance, out _) || !ArgUtility.TryGetFloat(specificFishData, 11, out var depthMultiplier, out _))
+            {
+                return 0;
+            }
+            float dropOffAmount = depthMultiplier * chance;
+            chance -= Math.Max(0, maxDepth - waterDepth) * dropOffAmount;
+            chance += player.FishingLevel / 50f;
+            if (isTrainingRod)
+            {
+                chance *= 1.1f;
+            }
+            chance = Math.Min(chance, 0.9f);
+            if (chance < 0.25 && hasCuriosityLure)
+            {
+                if (spawn.CuriosityLureBuff > -1f)
+                {
+                    chance += spawn.CuriosityLureBuff;
+                }
+                else
+                {
+                    const float max = 0.25f;
+                    const float min = 0.08f;
+                    chance = (max - min) / max * chance + (max - min) / 2f;
+                }
+            }
+            if (usingTargetBait)
+            {
+                chance *= 1.66f;
+            }
+            if (spawn.ApplyDailyLuck)
+            {
+                chance += (float)player.DailyLuck;
+            }
+            List<QuantityModifier> chanceModifiers = spawn.ChanceModifiers;
+            if (chanceModifiers is { Count: > 0 })
+            {
+                chance = Utility.ApplyQuantityModifiers(chance, spawn.ChanceModifiers, spawn.ChanceModifierMode, location);
+            }
+            return chance;
         }
 
 
-        private void AddFishToListDynamic(Vector2 bobberTile)              //very performance intensive check for fish fish available in this area - simulates fishing
+        private void AddFishToListDynamic(Vector2 bobberTile)              //very performance intensive check for fish available in this area - simulates fishing
         {
             try
             {
@@ -772,15 +739,15 @@ namespace StardewMods
                     who.luckLevel.Value = Game1.player.LuckLevel;
                     foreach (var item in Game1.player.fishCaught) who.fishCaught.Add(item);
                     foreach (var m in Game1.player.secretNotesSeen) who.secretNotesSeen.Add(m);
-                    who.stats.Values = new(Game1.player.stats.Values);
+                    who.stats.Values = new SerializableDictionaryWithCaseInsensitiveKeys<uint>(Game1.player.stats.Values);
                 }
                 if (oldGeneric == null)
                 {
-                    oldGeneric = new();
-                    fishFailed = new();
-                    fishHere = new() { "(O)168" };
-                    fishChances = new() { { "-1", 0 }, { "(O)168", 0 } };
-                    fishChancesSlow = new();
+                    oldGeneric = [];
+                    fishFailed = new Dictionary<string, int>();
+                    fishHere = ["(O)168"];
+                    fishChances = new Dictionary<string, int> { { "-1", 0 }, { "(O)168", 0 } };
+                    fishChancesSlow = new Dictionary<string, int>();
                     fishChancesModulo = 1;
                 }
                 int freq = (isMinigame || isMinigameOther) ? (6 / totalPlayersOnThisPC) : (extraCheckFrequency * 10 / totalPlayersOnThisPC); //minigame lowers frequency
@@ -789,6 +756,7 @@ namespace StardewMods
                     string fish = AddHardcoded(bobberTile, true);
                     if (fish != "-2")//not fully hardcoded
                     {
+                        Item item;
                         if (fish == "-1")//dynamic
                         {
                             //int nuts = 5;                                                                           //"fix" for preventing player from not getting specials       ----start1
@@ -809,16 +777,16 @@ namespace StardewMods
                             Game1.stats.TimesFished--;
                             try
                             {
-                                if (item.DisplayName.StartsWith("Error Item") == true)
+                                if (item.DisplayName.StartsWith("Error Item"))
                                 {
-                                    Monitor.LogOnce("Skipped Object of type" + item.GetType() + ", ID: " + item.QualifiedItemId + ", CodeName: " + item.Name + ", Category: " + item.Category + ". DisplayName is \"Error Item\".", LogLevel.Error);
+                                    monitor.LogOnce("Skipped Object of type" + item.GetType() + ", ID: " + item.QualifiedItemId + ", CodeName: " + item.Name + ", Category: " + item.Category + ". DisplayName is \"Error Item\".", LogLevel.Error);
                                     continue;
                                 }
                                 fish = item.QualifiedItemId;
                             }
                             catch (Exception)
                             {
-                                Monitor.LogOnce("Skipped Object of type" + item.GetType() + ", ID: " + item.QualifiedItemId + ", CodeName: " + item.Name + ", Category: " + item.Category + ". Missing DisplayName.", LogLevel.Error);
+                                monitor.LogOnce("Skipped Object of type" + item.GetType() + ", ID: " + item.QualifiedItemId + ", CodeName: " + item.Name + ", Category: " + item.Category + ". Missing DisplayName.", LogLevel.Error);
                                 continue;
                             }
 
@@ -843,9 +811,9 @@ namespace StardewMods
                             }
                             else if (!fishHere.Contains(fish))
                             {
-                                fishChances = new() { { "-1", 0 } };//reset % on new fish added
+                                fishChances = new Dictionary<string, int> { { "-1", 0 } };//reset % on new fish added
                                 foreach (var f in fishHere) fishChances.Add(f, 1);
-                                fishChancesSlow = new();
+                                fishChancesSlow = new Dictionary<string, int>();
                                 fishChancesModulo = 1;
 
                                 if (sortMode[screen] == 0) SortItemIntoListByDisplayName(fish); //sort by name
@@ -874,12 +842,15 @@ namespace StardewMods
                         {
                             fishChances.TryGetValue(fish, out val);
                             float chance = (float)val / fishChances["-1"] * 100f;
-                            if (chance < 0.5f) fishFailed[fish] = 5000;
-                            else if (chance < 1f) fishFailed[fish] = 3500;
-                            else if (chance < 2f) fishFailed[fish] = 3000;
-                            else if (chance < 3f) fishFailed[fish] = 2500;
-                            else if (chance < 4f) fishFailed[fish] = 1500;
-                            else fishFailed[fish] = 1000;
+                            fishFailed[fish] = chance switch
+                            {
+                                < 0.5f => 5000,
+                                < 1f => 3500,
+                                < 2f => 3000,
+                                < 3f => 2500,
+                                < 4f => 1500,
+                                _ => 1000
+                            };
                         }
                     }
                     foreach (var key in fishFailed.Keys.ToList())
@@ -890,7 +861,9 @@ namespace StardewMods
                 }
             }
             catch
-            { }
+            {
+                // ignored
+            }
         }
 
         private string AddHardcoded(Vector2 bobberTile, bool dynamic)//-2 skip dynamic, -1 dynamic, above -1 = item to add to dynamic
@@ -900,48 +873,41 @@ namespace StardewMods
             {
                 if (Utility.CreateRandom(Game1.stats.DaysPlayed, Game1.stats.TimesFished + 1, Game1.uniqueIDForThisGame).NextDouble() < 0.15 && (!Game1.player.team.limitedNutDrops.ContainsKey("IslandFishing") || Game1.player.team.limitedNutDrops["IslandFishing"] < 5)) return "(O)73";//nut
 
-                if (who.currentLocation is IslandSouthEast && bobberTile.X >= 17 && bobberTile.X <= 21 && bobberTile.Y >= 19 && bobberTile.Y <= 23)
+                if (who.currentLocation is not IslandSouthEast currentLocation || bobberTile.X is < 17 or > 21 ||
+                    bobberTile.Y is < 19 or > 23) return "-1";
+                if (!currentLocation.fishedWalnut.Value)
                 {
-                    if (!(who.currentLocation as IslandSouthEast).fishedWalnut.Value)
-                    {
-                        fishHere = new() { "(O)73" };
-                        fishChancesSlow = new() { { "-1", 1 }, { "(O)73", 1 }, { "(O)168", 0 } };
-                    }
-                    else
-                    {
-                        fishHere = new() { "(O)168" };
-                        fishChancesSlow = new() { { "-1", 1 }, { "(O)168", 1 } };
-                    }
-                    oldGeneric = null;
-                    return "-2";//prevents altering game state in dynamic
+                    fishHere = ["(O)73"];
+                    fishChancesSlow = new Dictionary<string, int> { { "-1", 1 }, { "(O)73", 1 }, { "(O)168", 0 } };
                 }
+                else
+                {
+                    fishHere = ["(O)168"];
+                    fishChancesSlow = new Dictionary<string, int> { { "-1", 1 }, { "(O)168", 1 } };
+                }
+                oldGeneric = null;
+                return "-2";//prevents altering game state in dynamic
             }
-            else if (!dynamic)
+
+            if (dynamic) return "-1";
+            switch (who.currentLocation)
             {
-                if (who.currentLocation is Railroad)
+                case Railroad when who.secretNotesSeen.Contains(GameLocation.NECKLACE_SECRET_NOTE_INDEX) && !who.hasOrWillReceiveMail(GameLocation.CAROLINES_NECKLACE_MAIL):
+                    return GameLocation.CAROLINES_NECKLACE_ITEM_QID;
+                case Forest:
                 {
-                    if (who.secretNotesSeen.Contains(GameLocation.NECKLACE_SECRET_NOTE_INDEX) && !who.hasOrWillReceiveMail(GameLocation.CAROLINES_NECKLACE_MAIL))
+                    if (bobberTile.X is > 50f and < 66f && bobberTile.Y > 100f)
                     {
-                        return GameLocation.CAROLINES_NECKLACE_ITEM_QID;
-                    }
-                }
-                else if (who.currentLocation is Forest)
-                {
-                    if (bobberTile.X > 50f && bobberTile.X < 66f && bobberTile.Y > 100f)
-                    {
-                        if (!rod.QualifiedItemId.Contains("TrainingRod"))
+                        if (!rod!.QualifiedItemId.Contains("TrainingRod"))
                         {
                             float gobyChance = 0.15f;
-                            if (rod != null)
+                            if (rod.HasCuriosityLure())
                             {
-                                if (rod.HasCuriosityLure())
-                                {
-                                    gobyChance += 0.15f;
-                                }
-                                if (rod.GetBait() != null && rod.GetBait().Name.Contains("Goby"))
-                                {
-                                    gobyChance += 0.2f;
-                                }
+                                gobyChance += 0.15f;
+                            }
+                            if (rod.GetBait() != null && rod.GetBait().Name.Contains("Goby"))
+                            {
+                                gobyChance += 0.2f;
                             }
                             if (gobyChance > 0)
                             {
@@ -953,22 +919,21 @@ namespace StardewMods
                             }
                         }
                     }
+
+                    break;
                 }
-                else if (who.currentLocation is MineShaft mine)
+                case MineShaft mine:
                 {
-                    if (!rod.QualifiedItemId.Contains("TrainingRod"))
+                    if (!rod!.QualifiedItemId.Contains("TrainingRod"))
                     {
                         double chanceMultiplier = 1.5;
                         chanceMultiplier += 0.4 * who.FishingLevel;
-                        string baitName = "";
-                        if (rod != null)
+                        if (rod.HasCuriosityLure())
                         {
-                            if (rod.HasCuriosityLure())
-                            {
-                                chanceMultiplier += 5.0;
-                            }
-                            baitName = rod.GetBait()?.Name ?? "";
+                            chanceMultiplier += 5.0;
                         }
+
+                        var baitName = rod.GetBait()?.Name ?? "";
                         switch (mine.getMineArea())
                         {
                             case 0:
@@ -981,9 +946,11 @@ namespace StardewMods
                             case 80:
                                 chanceMultiplier += (baitName.Contains("Lava Eel") ? 10 : 0);
                                 return "(O)162|" + (0.01 + 0.008 * chanceMultiplier)
-                                    + "|(O)CaveJelly|" + (0.05 + who.LuckLevel * 0.05);
+                                                 + "|(O)CaveJelly|" + (0.05 + who.LuckLevel * 0.05);
                         }
                     }
+
+                    break;
                 }
             }
             return "-1";
@@ -991,14 +958,14 @@ namespace StardewMods
 
         private void AddCrabPotFish()
         {
-            fishHere = new();
+            fishHere = [];
 
             bool isMariner = who.professions.Contains(10);
             if (!isMariner) fishHere.Add("(O)168");//trash
-            fishChancesSlow = new();
+            fishChancesSlow = new Dictionary<string, int>();
 
             double fishChance = 1f;
-            if (!isMariner && who.currentLocation.TryGetFishAreaForTile(who.Tile, out var _, out var data))
+            if (!isMariner && who.currentLocation.TryGetFishAreaForTile(who.Tile, out var _, out FishAreaData data))
             {
                 fishChance = 1f - ((double?)data?.CrabPotJunkChance) ?? 0.2;
             }
@@ -1046,10 +1013,9 @@ namespace StardewMods
             if (sortMode[screen] == 1) SortListByPercentages();
         }
 
-        private Item item;
         private void SortItemIntoListByDisplayName(string itemId)
         {
-            var data = ItemRegistry.GetDataOrErrorItem(itemId);
+            ParsedItemData data = ItemRegistry.GetDataOrErrorItem(itemId);
             for (int j = 0; j < fishHere.Count; j++)
             {
                 if (string.Compare(data.DisplayName, ItemRegistry.GetDataOrErrorItem(fishHere[j]).DisplayName, StringComparison.CurrentCulture) <= 0)
@@ -1085,7 +1051,7 @@ namespace StardewMods
         /// <summary>Makes text a tiny bit bolder and adds a border behind it. The border uses text colour's alpha for its aplha value. 6 DrawString operations, so 6x less efficient.</summary>
         private void DrawStringWithBorder(SpriteBatch batch, SpriteFont font, string text, Vector2 position, Color color, float rotation, Vector2 origin, float scale, SpriteEffects effects, float layerDepth, Color? borderColor = null)
         {
-            Color border = borderColor.HasValue ? borderColor.Value : Color.Black;
+            Color border = borderColor ?? Color.Black;
             border.A = color.A;
             batch.DrawString(font, text, position + new Vector2(-1.2f * scale, -1.2f * scale), border, rotation, origin, scale, effects, layerDepth - 0.00001f);
             batch.DrawString(font, text, position + new Vector2(1.2f * scale, -1.2f * scale), border, rotation, origin, scale, effects, layerDepth - 0.00001f);
@@ -1144,7 +1110,7 @@ namespace StardewMods
         }
         public float FixIconScale(float scale)
         {
-            return scale * barScale[screen] / fixedZooom;
+            return scale * barScale[screen] / fixedZoom;
         }
     }
 }
